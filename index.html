@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PromptDoc - Humanitas AI</title>
+    <!-- Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS 3 CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & Babel for standalone JSX -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Markdown Parser -->
+    <script src="https://unpkg.com/marked/marked.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: '#1e3a5f',
+                        brandLight: '#eef2f6',
+                        accent: '#c5a059',
+                        paper: '#f4f6f8',
+                        ink: '#2c3e50',
+                        inkMuted: '#7f8c8d',
+                        border: '#dcdde1',
+                    },
+                    fontFamily: {
+                        sans: ['Helvetica Neue', 'Arial', 'sans-serif'],
+                        serif: ['Georgia', 'serif'],
+                        mono: ['Courier New', 'Courier', 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style type="text/css">
+        body { background-color: #f4f6f8; color: #2c3e50; }
+        .prompt-box { background: #2c3e50; color: #ecf0f1; }
+        .panel { background: #ffffff; border: 1px solid #dcdde1; border-radius: 8px; }
+        .prose h1, .prose h2, .prose h3 { font-family: Georgia, serif; color: #1e3a5f; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- CONFIGURAZIONE GEMINI ---
+        // Se pubblichi su GitHub Pages, puoi inserire qui la tua API Key (attenzione alla sicurezza!)
+        // O lasciarla vuota per chiederla all'utente (opzionale).
+        const GEMINI_API_KEY = "INSERISCI_QUI_LA_TUA_API_KEY";
+
+        // --- SERVIZI ---
+        // Utilizziamo l'import dinamico per caricare il modulo SDK di Gemini
+        let aiClient = null;
+        async function getAiClient() {
+            if (aiClient) return aiClient;
+            // Caricamento asincrono del modulo ESM
+            const { GoogleGenAI } = await import('https://esm.run/@google/genai');
+            aiClient = new GoogleGenAI({ apiKey: GEMINI_API_KEY });
+            return aiClient;
+        }
+
+        async function refinePrompt(form) {
+            const ai = await getAiClient();
+            const model = "gemini-3-flash-latest"; // Versione stabile per standalone
+            
+            const systemInstruction = `
+                Sei un esperto di prompt engineering per la didattica (materie umanistiche).
+                Trasforma le richieste dei docenti in prompt strutturati ed efficaci per LLM.
+                Usa il framework "S.P.E.C.I.A.L". Ritorna sempre un oggetto JSON.
+            `;
+
+            const userPrompt = `Materia: ${form.subject}\nClasse: ${form.grade}\nArgomento: ${form.topic}\nObiettivo: ${form.learningObjective}\nTipo: ${form.materialType}\nTono: ${form.tone}\nVincoli: ${form.constraints}`;
+
+            try {
+                const result = await ai.models.generateContent({
+                    model,
+                    contents: userPrompt,
+                    config: {
+                        systemInstruction,
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: "OBJECT",
+                            properties: {
+                                improvedPrompt: { type: "STRING" },
+                                explanation: { type: "STRING" },
+                                tips: { type: "ARRAY", items: { type: "STRING" } }
+                            },
+                            required: ["improvedPrompt", "explanation", "tips"]
+                        }
+                    }
+                });
+                return JSON.parse(result.text);
+            } catch (error) {
+                console.error(error);
+                throw error;
+            }
+        }
+
+        async function generatePreview(prompt) {
+            const ai = await getAiClient();
+            try {
+                const result = await ai.models.generateContent({
+                    model: "gemini-3-flash-latest",
+                    contents: `Esegui questo prompt e genera un'anteprima del materiale didattico:\n\n${prompt}`,
+                });
+                return result.text || "Nessun contenuto generato.";
+            } catch (error) {
+                return "Errore durante la generazione dell'anteprima.";
+            }
+        }
+
+        // --- COMPONENTI ---
+
+        function Icon({ name, size = 18, className = "" }) {
+            // Semplice wrapper per Lucide Icons in standalone
+            return <i data-lucide={name} className={className} style={{ width: size, height: size }}></i>;
+        }
+
+        function Sidebar({ onSelectTemplate, activeTemplateId }) {
+            const templates = [
+                { id: 'lezione', name: 'Piano di Lezione', icon: 'layout' },
+                { id: 'temi', name: 'Temi e Saggi', icon: 'book-open' },
+                { id: 'focus', name: 'Approfondimento', icon: 'info' }
+            ];
+
+            useEffect(() => {
+                if (window.lucide) window.lucide.createIcons();
+            }, []);
+
+            return (
+                <aside className="w-[260px] bg-brand text-white h-screen flex flex-col hidden md:flex shrink-0">
+                    <div className="p-6 border-b border-white/10 mb-6 font-serif text-2xl font-bold tracking-tight uppercase">
+                        Humanitas AI
+                    </div>
+                    <nav className="flex-1 space-y-6">
+                        <ul className="space-y-0.5">
+                            {templates.map(t => (
+                                <li 
+                                    key={t.id} 
+                                    onClick={() => onSelectTemplate(t)}
+                                    className={`px-6 py-3 text-sm cursor-pointer flex items-center gap-3 transition-all ${activeTemplateId === t.id ? 'bg-white/5 border-l-4 border-accent opacity-100' : 'opacity-70 border-l-4 border-transparent hover:bg-white/5 hover:opacity-100'}`}
+                                >
+                                    <div className="p-1.5 bg-white/10 rounded"><Icon name={t.icon} size={16} /></div>
+                                    <span className="font-medium">{t.name}</span>
+                                </li>
+                            ))}
+                        </ul>
+                    </nav>
+                    <div className="p-4 border-t border-white/5 text-[10px] text-white/30 text-center uppercase tracking-tighter">
+                        Prompt Docenti V.1.0
+                    </div>
+                </aside>
+            );
+        }
+
+        function Header({ onCopy }) {
+            return (
+                <header className="h-20 flex items-end justify-between px-8 mb-8 mt-4 shrink-0">
+                    <div>
+                        <h1 className="font-serif text-3xl font-bold text-brand leading-tight">Generatore Materiale Didattico</h1>
+                        <p className="text-sm text-inkMuted">Ottimizzazione prompt per materie umanistiche.</p>
+                    </div>
+                    <div className="flex gap-3">
+                        <button className="px-5 py-2.5 rounded border border-border text-xs font-semibold uppercase tracking-wide hover:bg-white">Supporto</button>
+                        <button onClick={onCopy} className="bg-accent text-white px-5 py-2.5 rounded text-xs font-semibold uppercase tracking-wide hover:opacity-90">Copia Prompt</button>
+                    </div>
+                </header>
+            );
+        }
+
+        function PromptBuilder({ onSubmit, isLoading }) {
+            const [form, setForm] = useState({
+                subject: 'Letteratura',
+                grade: '3^ Superiore',
+                topic: '',
+                learningObjective: '',
+                materialType: 'lezione',
+                tone: 'coinvolgente',
+                constraints: ''
+            });
+
+            return (
+                <div className="max-w-6xl mx-auto py-4 px-6 h-full flex flex-col">
+                    <form className="panel flex-1 flex flex-col overflow-hidden" onSubmit={(e) => { e.preventDefault(); onSubmit(form); }}>
+                        <div className="px-5 py-4 bg-brandLight border-b border-border font-bold text-[13px] uppercase tracking-wider text-brand">
+                            Parametri Didattici
+                        </div>
+                        <div className="p-6 flex-1 overflow-y-auto space-y-6">
+                            <div className="grid md:grid-cols-2 gap-8">
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold uppercase text-brand">Argomento della Lezione</label>
+                                    <input className="w-full bg-paper/50 border border-border rounded px-3 py-2 text-sm" value={form.topic} onChange={e => setForm({...form, topic: e.target.value})} placeholder="es: Boccaccio: Il Decameron" required />
+                                </div>
+                                <div className="space-y-1">
+                                    <label className="text-[10px] font-bold uppercase text-brand">Classe</label>
+                                    <select className="w-full bg-paper/50 border border-border rounded px-3 py-2 text-sm" value={form.grade} onChange={e => setForm({...form, grade: e.target.value})}>
+                                        <option>1^ Superiore</option><option>2^ Superiore</option><option>3^ Superiore</option><option>4^ Superiore</option><option>5^ Superiore</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] font-bold uppercase text-brand">Dettagli / Obiettivi</label>
+                                <textarea className="w-full bg-paper/50 border border-border rounded px-3 py-2 text-sm min-h-[100px]" value={form.learningObjective} onChange={e => setForm({...form, learningObjective: e.target.value})} placeholder="Es: Analisi del ruolo della fortuna e delle figure femminili..." />
+                            </div>
+                            <div className="grid md:grid-cols-3 gap-6">
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-brand">Materia</label>
+                                    <select className="w-full border border-border rounded px-3 py-2 text-sm" value={form.subject} onChange={e => setForm({...form, subject: e.target.value})}>
+                                        <option>Letteratura</option><option>Storia</option><option>Filosofia</option><option>Greco/Latino</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-brand">Tipo Materiale</label>
+                                    <select className="w-full border border-border rounded px-3 py-2 text-sm" value={form.materialType} onChange={e => setForm({...form, materialType: e.target.value})}>
+                                        <option value="lezione">Lezione</option><option value="esercizio">Esercizio</option><option value="mappa">Mappa</option><option value="verifica">Verifica</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="text-[10px] font-bold uppercase text-brand">Tono</label>
+                                    <select className="w-full border border-border rounded px-3 py-2 text-sm" value={form.tone} onChange={e => setForm({...form, tone: e.target.value})}>
+                                        <option value="formale">Formale</option><option value="coinvolgente">Coinvolgente</option><option value="critico">Analitico</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="p-5 border-t border-border bg-paper/50 flex justify-end gap-3">
+                            <button type="submit" disabled={isLoading} className="bg-accent text-white px-8 py-2 rounded text-xs font-bold uppercase tracking-wide hover:opacity-90 disabled:opacity-50">
+                                {isLoading ? "Analisi..." : "Ottimizza Prompt"}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            );
+        }
+
+        function ResultCard({ result, onReset }) {
+            const [preview, setPreview] = useState("");
+            const [loading, setLoading] = useState(false);
+
+            const handlePreview = async () => {
+                setLoading(true);
+                const text = await generatePreview(result.improvedPrompt);
+                setPreview(text);
+                setLoading(false);
+            };
+
+            return (
+                <div className="max-w-6xl mx-auto py-4 px-6 h-full flex flex-col gap-6">
+                    <div className="flex justify-between items-center shrink-0">
+                        <button onClick={onReset} className="text-[10px] font-bold text-brand uppercase tracking-widest flex items-center gap-1">Indietro</button>
+                        <div className="px-3 py-1 bg-green-50 border border-green-200 text-green-600 text-[10px] font-bold rounded">PROMPT OTTIMIZZATO</div>
+                    </div>
+                    <div className="grid md:grid-cols-2 gap-6 flex-1 overflow-hidden">
+                        <div className="panel flex flex-col overflow-hidden">
+                            <div className="px-5 py-3 bg-brandLight border-b border-border flex justify-between items-center">
+                                <span className="text-[11px] font-bold uppercase text-brand tracking-widest">Codice Prompt</span>
+                                <button onClick={() => navigator.clipboard.writeText(result.improvedPrompt)} className="text-[10px] font-bold text-accent uppercase underline">Copia</button>
+                            </div>
+                            <div className="p-4 flex-1 bg-ink flex flex-col gap-4 overflow-hidden">
+                                <pre className="flex-1 overflow-y-auto text-paper text-xs font-mono leading-relaxed p-4 bg-black/20 rounded border border-white/10 whitespace-pre-wrap">
+                                    {result.improvedPrompt}
+                                </pre>
+                            </div>
+                        </div>
+                        <div className="flex flex-col gap-6 overflow-y-auto">
+                            <div className="panel p-5 bg-white space-y-3">
+                                <h4 className="text-[10px] font-bold uppercase tracking-widest text-accent">Perché funziona</h4>
+                                <p className="text-sm italic text-inkMuted leading-relaxed">"{result.explanation}"</p>
+                            </div>
+                            {!preview ? (
+                                <div className="panel p-8 bg-brand text-white text-center space-y-4">
+                                    <h3 className="font-serif text-lg font-bold">Genera Anteprima</h3>
+                                    <p className="text-xs text-white/70">Verifica l'efficacia del prompt generando una bozza del materiale didattico.</p>
+                                    <button onClick={handlePreview} disabled={loading} className="bg-accent px-8 py-2.5 rounded font-bold text-[10px] uppercase tracking-widest hover:opacity-90">
+                                        {loading ? "Generazione..." : "Prova Prompt"}
+                                    </button>
+                                </div>
+                            ) : (
+                                <div className="panel overflow-hidden bg-white animate-fade-in duration-500">
+                                    <div className="px-5 py-3 bg-brandLight border-b border-border text-[11px] font-bold uppercase text-brand">Bozza Materiale</div>
+                                    <div className="p-6 prose prose-sm text-ink/80 text-sm leading-relaxed" dangerouslySetInnerHTML={{ __html: marked.parse(preview) }}></div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function App() {
+            const [isLoading, setIsLoading] = useState(false);
+            const [result, setResult] = useState(null);
+
+            const handleSubmit = async (data) => {
+                if (GEMINI_API_KEY === "INSERISCI_QUI_LA_TUA_API_KEY") {
+                    alert("Carissimo docente, ricorda di inserire la tua Gemini API Key nel codice per far funzionare l'IA!");
+                    return;
+                }
+                setIsLoading(true);
+                try {
+                    const refined = await refinePrompt(data);
+                    setResult(refined);
+                } catch (e) {
+                    alert("Errore nella generazione.");
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+
+            return (
+                <div className="flex h-screen w-full overflow-hidden">
+                    <Sidebar onSelectTemplate={() => {}} />
+                    <div className="flex-1 flex flex-col h-full bg-paper overflow-hidden">
+                        <Header onCopy={() => result && navigator.clipboard.writeText(result.improvedPrompt)} />
+                        <div className="flex-1 flex flex-col overflow-hidden">
+                            {!result ? (
+                                <PromptBuilder onSubmit={handleSubmit} isLoading={isLoading} />
+                            ) : (
+                                <ResultCard result={result} onReset={() => setResult(null)} />
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
